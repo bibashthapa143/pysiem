@@ -1,0 +1,5 @@
+Sep 28 04:27:18 metasploitable sshd[5452]: Failed password for root from 10.0.2.4 port 35643 ssh2
+Oct 5 03:29:46 metasploitable sshd[5331]: Accepted password for msfadmin from 192.168.18.176 port 60056 ssh2
+Oct 5 03:37:39 metasploitable sshd[5345]: Invalid user fakeuser from 192.168.18.176
+Oct 5 03:37:50 metasploitable sshd[5345]: Failed password for invalid user fakeuser from 192.168.18.176 port 54524 ssh2
+Oct 5 03:37:31 metasploitable sshd[5333]: Received disconnect from 192.168.18.176: 11: disconnected by user
