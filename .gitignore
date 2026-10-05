@@ -17,8 +17,9 @@ __pycache__/
 .env
 .env.*
 
-# Local log files
+# Local log files (but keep our sample logs)
 *.log
+!sample_logs/*.log
 
 # IDE/editor files
 .vscode/
