@@ -1,4 +1,8 @@
-from siem.parser import parse_accepted_password, parse_failed_password
+from siem.parser import (
+    is_ignored_line,
+    parse_accepted_password,
+    parse_failed_password,
+)
 
 
 def test_failed_password_outcome_is_failure():
@@ -34,6 +38,7 @@ def test_parses_failed_password_for_valid_user():
 def test_returns_none_for_unrelated_line():
     assert parse_failed_password("this is not an ssh log line") is None
 
+
 def test_flags_invalid_user():
     line = (
         "Oct  5 03:37:50 metasploitable sshd[5345]: "
@@ -43,3 +48,35 @@ def test_flags_invalid_user():
     event = parse_failed_password(line)
     assert event["username"] == "fakeuser"
     assert event["invalid_user"] is True
+
+
+def test_known_noise_is_ignored():
+    line = (
+        "Oct  5 03:37:39 metasploitable sshd[5345]: "
+        "Invalid user fakeuser from 192.168.18.176"
+    )
+    assert is_ignored_line(line) is True
+
+
+def test_unknown_line_is_not_ignored():
+    assert is_ignored_line("something we have never seen") is False
+
+
+def test_parses_failed_publickey():
+    line = (
+        "Oct  5 03:40:00 metasploitable sshd[5400]: "
+        "Failed publickey for root from 192.168.18.176 port 50000 ssh2"
+    )
+    event = parse_failed_password(line)
+    assert event["method"] == "publickey"
+    assert event["outcome"] == "failure"
+
+def test_parses_accepted_publickey():
+    line = (
+        "Oct  5 03:45:00 metasploitable sshd[5500]: "
+        "Accepted publickey for msfadmin from 192.168.18.176 port 50500 ssh2"
+    )
+    event = parse_accepted_password(line)
+    assert event["method"] == "publickey"
+    assert event["outcome"] == "success"
+
