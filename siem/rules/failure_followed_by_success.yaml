@@ -1,0 +1,11 @@
+id: ssh_failure_then_success
+name: SSH Failures Followed by Successful Login
+description: Multiple failed authentication attempts followed by a successful login for the same account/source IP, indicating potential brute force breach.
+severity: critical
+mitre_attack: T1110
+type: sequence
+failure_threshold: 3
+window_seconds: 600
+group_by:
+  - src_ip
+  - username

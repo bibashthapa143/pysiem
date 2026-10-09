@@ -1,0 +1,12 @@
+id: ssh_brute_force
+name: SSH Brute Force Detection
+description: Multiple failed SSH login attempts originating from the same source IP.
+severity: high
+mitre_attack: T1110.001
+type: threshold
+condition:
+  activity: authentication
+  outcome: failure
+group_by: src_ip
+threshold: 5
+window_seconds: 300

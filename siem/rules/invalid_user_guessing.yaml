@@ -1,0 +1,13 @@
+id: ssh_invalid_user_guessing
+name: SSH Invalid User Account Guessing
+description: Multiple authentication attempts using invalid or non-existent usernames from the same source IP.
+severity: medium
+mitre_attack: T1087.001
+type: threshold
+condition:
+  activity: authentication
+  outcome: failure
+  invalid_user: true
+group_by: src_ip
+threshold: 3
+window_seconds: 300
