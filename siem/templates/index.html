@@ -46,14 +46,21 @@
     <section class="page-section active" id="section-dashboard" aria-labelledby="heading-dashboard">
       <div class="page-header-row">
         <div>
-          <h1 class="page-title" id="heading-dashboard">SOC Operations Dashboard</h1>
+          <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+            <h1 class="page-title" id="heading-dashboard">SOC Operations Dashboard</h1>
+            <span class="badge badge-low" id="telemetry-mode-indicator" style="font-size:0.675rem; letter-spacing:0.04em;">⚡ DEMO TELEMETRY (60-MIN)</span>
+          </div>
           <div class="page-subtitle">
-            <span>Live Security Telemetry</span>
+            <span id="dashboard-source-label">Simulated Enterprise SOC Telemetry (Correlated Anomaly)</span>
             <span>•</span>
             <span id="dashboard-last-updated">Last updated: Just now</span>
           </div>
         </div>
-        <div style="display:flex; align-items:center; gap:0.5rem;">
+        <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+          <div class="btn-group" id="telemetry-mode-selector" role="group" aria-label="Telemetry Data Source">
+            <button class="btn btn-secondary btn-sm active-status" id="btn-telemetry-demo" title="Show realistic 60-minute simulated SOC dataset with brute-force anomaly">⚡ Demo Telemetry</button>
+            <button class="btn btn-secondary btn-sm" id="btn-telemetry-live" title="Show live telemetry directly from SQLite database">● Live Database</button>
+          </div>
           <button class="btn btn-secondary btn-sm" id="btn-dashboard-refresh" title="Refresh all dashboard telemetry">⟳ Refresh Telemetry</button>
         </div>
       </div>
@@ -157,7 +164,7 @@
           <div class="card-header">
             <div>
               <h2 class="card-title">Authentication Outcomes</h2>
-              <span style="font-size:0.75rem; color:var(--text-dim);">Total lifetime authentication ratio</span>
+              <span id="outcomes-subtitle" style="font-size:0.75rem; color:var(--text-dim);">Authentication outcome ratio across telemetry window</span>
             </div>
           </div>
           <div id="chart-outcomes" style="padding: 0.35rem 0;"></div>

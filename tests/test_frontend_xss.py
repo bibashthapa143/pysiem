@@ -280,3 +280,77 @@ def test_chart_functions_and_timeline_safe_against_xss():
     assert res.returncode == 0
     assert "CHARTS_AND_TIMELINE_SAFE" in res.stdout
 
+
+def test_mock_dataset_mathematical_consistency_and_chart_realism():
+    """
+    Verify using Node.js that the unified mock dataset and monotone curve generation
+    satisfy all strict SOC mathematical consistency requirements and invariants.
+    """
+    node_script = """
+    const fs = require('fs');
+    const code = fs.readFileSync('siem/static/app.js', 'utf8');
+
+    // Extract generateUnifiedMockDataset
+    const matchMock = code.match(/function generateUnifiedMockDataset\\([\\s\\S]*?\\n\\}/);
+    if (!matchMock) process.exit(1);
+    eval(matchMock[0]);
+
+    // Extract generateMonotonePath
+    const matchMonotone = code.match(/function generateMonotonePath\\([\\s\\S]*?\\n\\}/);
+    if (!matchMonotone) process.exit(2);
+    eval(matchMonotone[0]);
+
+    const mock = generateUnifiedMockDataset(Date.now());
+
+    // 1. Exactly 60 chronological minute buckets
+    if (mock.buckets.length !== 60) process.exit(10);
+
+    // 2. Invariants for each minute bucket
+    let sumTot = 0, sumSucc = 0, sumFail = 0, sumOth = 0;
+    for (let i = 0; i < mock.buckets.length; i++) {
+        const b = mock.buckets[i];
+        if (b.total !== b.successes + b.failures + b.other) process.exit(11);
+        if (b.successes > b.total || b.failures > b.total) process.exit(12);
+        if (b.total <= 0 || b.successes <= 0 || b.failures <= 0) process.exit(13);
+        sumTot += b.total;
+        sumSucc += b.successes;
+        sumFail += b.failures;
+        sumOth += b.other;
+    }
+
+    if (sumTot !== mock.totalEvents) process.exit(14);
+    if (sumSucc !== mock.successfulLogins) process.exit(15);
+    if (sumFail !== mock.failedLogins) process.exit(16);
+    if (sumOth !== mock.otherEvents) process.exit(17);
+
+    // 3. Mathematical agreement across metrics
+    const ipSum = mock.topIps.reduce((acc, x) => acc + x.count, 0);
+    if (ipSum !== mock.failedLogins) process.exit(18);
+
+    const userSum = mock.topUsers.reduce((acc, x) => acc + x.count, 0);
+    if (userSum !== mock.failedLogins) process.exit(19);
+
+    // 4. Severity counts and total alerts
+    const sevSum = mock.severityCounts.critical + mock.severityCounts.high + mock.severityCounts.medium + mock.severityCounts.low;
+    if (sevSum !== mock.totalAlerts) process.exit(20);
+    if (mock.severityCounts.critical + mock.severityCounts.high !== mock.critHighAlerts) process.exit(21);
+    if (mock.priorityAlerts.length !== mock.critHighAlerts) process.exit(22);
+
+    // 5. Monotone path generation verification
+    const testPts = mock.buckets.map((b, i) => ({ x: i * 10, y: 100 - b.total }));
+    const pathD = generateMonotonePath(testPts);
+    if (!pathD.startsWith("M") || pathD.includes("NaN")) process.exit(23);
+
+    console.log("MOCK_DATASET_AND_CHARTS_VERIFIED");
+    """
+
+    res = subprocess.run(
+        ["node", "-e", node_script],
+        cwd=os.path.join(os.path.dirname(__file__), ".."),
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 0
+    assert "MOCK_DATASET_AND_CHARTS_VERIFIED" in res.stdout
+
+

@@ -148,208 +148,518 @@ function getMitreUrl(tag) {
 
 // -------------------------------------------------------------
 // -------------------------------------------------------------
+// Unified SOC Telemetry Ground Truth Dataset (60-Minute Window)
+// -------------------------------------------------------------
+function generateUnifiedMockDataset(refTimeMs = Date.now()) {
+  // Deterministic baseline distribution across 60 minutes
+  // Calibrated to small enterprise perimeter SOC environment
+  const succBase = [
+    15, 17, 15, 18, 14, 18, 16, 17, 15, 18,
+    15, 17, 14, 18, 15, 18, 17, 16, 18, 15,
+    16, 16, 18, 15, 17, 15, 15, 17, 18, 16,
+    14, 17, 16, 18, 17, 15, 15, 18, 16, 17,
+    14, 18, 16, 17, 15, 17, 17, 16, 15, 18,
+    16, 17, 15, 18, 16, 17, 15, 18, 16, 17
+  ]; // Sum = 980
+
+  const failBase = [
+    1, 1, 1, 2, 1, 2, 1, 2, 1, 1, // 0-9
+    1, 2, 1, 3, 1, 2, 1, 2, 1, 2, // 10-19
+    1, 2, 1, 3, 1,                // 20-24: normal baseline (1-3)
+    14, 32, 58, 76, 48, 28, 16, 8, 4, // 25-33: Anomaly 1 - SSH Brute-Force velocity spike (peak 76)
+    2, 1, 2, 1, 3, 1, 2, 1, 2, 1, 2, 1, // 34-45: return to baseline
+    10, 24, 22, 8,                // 46-49: Anomaly 2 - Credential spray burst (peak 24)
+    2, 1, 2, 1, 3, 1, 2, 1, 2, 1  // 50-59: post-incident stabilization / fail2ban active
+  ]; // Sum = 420
+
+  const otherBase = [
+    8, 9, 6, 10, 8, 9, 10, 7, 9, 7,
+    10, 8, 8, 7, 10, 8, 9, 7, 10, 7,
+    9, 8, 9, 8, 9, 10, 11, 12, 14, 11,
+    10, 9, 7, 9, 8, 10, 8, 8, 7, 10,
+    8, 9, 7, 10, 7, 9, 11, 11, 10, 8,
+    9, 8, 7, 9, 8, 7, 8, 7, 7, 6
+  ]; // Sum = 520
+
+  const buckets = [];
+  let sumTotal = 0;
+  let sumSuccess = 0;
+  let sumFailure = 0;
+  let sumOther = 0;
+
+  // Align to current minute boundary for consistent, non-drifting time ticks
+  const baseTime = Math.floor(refTimeMs / 60000) * 60000;
+
+  for (let i = 0; i < 60; i++) {
+    const minuteOffset = 59 - i;
+    const timeMs = baseTime - minuteOffset * 60000;
+    const dateObj = new Date(timeMs);
+    const timeLabel = `${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}`;
+    const fullIso = dateObj.toISOString();
+
+    const succ = succBase[i];
+    const fail = failBase[i];
+    const other = otherBase[i];
+    const total = succ + fail + other;
+
+    sumTotal += total;
+    sumSuccess += succ;
+    sumFailure += fail;
+    sumOther += other;
+
+    const isSpike = fail >= 14;
+    const isCompromise = i === 49;
+    const anomalyTag = (i >= 25 && i <= 33)
+      ? "Brute-Force Velocity Spike"
+      : (i >= 46 && i <= 49 ? "Credential Spray Burst" : null);
+
+    buckets.push({
+      minuteIndex: i,
+      minuteOffset,
+      timeMs,
+      timeLabel,
+      fullIso,
+      total,
+      successes: succ,
+      failures: fail,
+      other,
+      isSpike,
+      isCompromise,
+      anomalyTag
+    });
+  }
+
+  // Correlated Alert Severity Breakdown (sums exactly to 14 alerts)
+  const severityCounts = {
+    critical: 2,
+    high: 4,
+    medium: 5,
+    low: 3
+  };
+  const totalAlerts = 14;
+  const openAlerts = 9;
+
+  // Correlated Top Attacking Source IPs (all RFC 1918 / RFC 5737 compliant)
+  // Sum of failure attempts strictly matches total failures: 245 + 88 + 46 + 26 + 15 = 420
+  const topIps = [
+    { ip: "192.168.1.105", count: 245, role: "Primary Brute-Force Actor" },
+    { ip: "10.0.4.15", count: 88, role: "Internal Credential Spray" },
+    { ip: "172.16.20.88", count: 46, role: "DMZ Service Probes" },
+    { ip: "198.51.100.42", count: 26, role: "External Scanner" },
+    { ip: "203.0.113.19", count: 15, role: "Dictionary Probe" }
+  ];
+
+  // Correlated Top Targeted Accounts
+  // Sum of target attempts strictly matches total failures: 215 + 105 + 52 + 32 + 16 = 420
+  const topUsers = [
+    { username: "root", count: 215, role: "Privileged Superuser" },
+    { username: "admin", count: 105, role: "Administrative Console" },
+    { username: "deploy", count: 52, role: "CI/CD Service Account" },
+    { username: "ubuntu", count: 32, role: "Default Cloud User" },
+    { username: "postgres", count: 16, role: "Database Admin" }
+  ];
+
+  // Correlated Priority Incidents Queue (matching Critical and High alerts: 2 + 4 = 6)
+  // All incident event counts strictly reflect threat intelligence metrics
+  const priorityAlerts = [
+    {
+      id: 101,
+      severity: "critical",
+      title: "SSH Brute Force Velocity Exceeded",
+      description: "High-rate authentication failure burst detected from 192.168.1.105 targeting root and admin.",
+      mitre_tag: "T1110.001",
+      status: "new",
+      event_count: 245,
+      rule_id: "ssh_brute_force",
+      last_seen: new Date(baseTime - 28 * 60000).toISOString().replace("T", " ").replace(/\..+$/, " UTC"),
+      details: { src_ip: "192.168.1.105", username: "root" }
+    },
+    {
+      id: 102,
+      severity: "critical",
+      title: "Privileged Root Credential Access Post-Spray",
+      description: "Successful authorization on root account from 10.0.4.15 following password spray burst.",
+      mitre_tag: "T1078",
+      status: "new",
+      event_count: 88,
+      rule_id: "ssh_failure_then_success",
+      last_seen: new Date(baseTime - 11 * 60000).toISOString().replace("T", " ").replace(/\..+$/, " UTC"),
+      details: { src_ip: "10.0.4.15", username: "root" }
+    },
+    {
+      id: 103,
+      severity: "high",
+      title: "SSH Password Spraying Across Multiple Accounts",
+      description: "Authentication failures targeting distinct service accounts (admin, deploy, ubuntu) from 10.0.4.15.",
+      mitre_tag: "T1110.003",
+      status: "acknowledged",
+      event_count: 88,
+      rule_id: "ssh_password_spraying",
+      last_seen: new Date(baseTime - 12 * 60000).toISOString().replace("T", " ").replace(/\..+$/, " UTC"),
+      details: { src_ip: "10.0.4.15", usernames: ["admin", "deploy", "ubuntu"] }
+    },
+    {
+      id: 104,
+      severity: "high",
+      title: "Repeated Failed Auths on Administrative Accounts",
+      description: "Sequential failed attempts targeting 'deploy' account within sliding correlation window.",
+      mitre_tag: "T1110.001",
+      status: "new",
+      event_count: 46,
+      rule_id: "ssh_brute_force",
+      last_seen: new Date(baseTime - 22 * 60000).toISOString().replace("T", " ").replace(/\..+$/, " UTC"),
+      details: { src_ip: "172.16.20.88", username: "deploy" }
+    },
+    {
+      id: 105,
+      severity: "high",
+      title: "External Port Reconnaissance & Auth Probes",
+      description: "Multiple unauthorized connection handshakes originating from documentation subnet 198.51.100.42.",
+      mitre_tag: "T1595",
+      status: "new",
+      event_count: 26,
+      rule_id: "ssh_invalid_user_guessing",
+      last_seen: new Date(baseTime - 35 * 60000).toISOString().replace("T", " ").replace(/\..+$/, " UTC"),
+      details: { src_ip: "198.51.100.42", username: "root" }
+    },
+    {
+      id: 106,
+      severity: "high",
+      title: "Automated Dictionary Scanning Sequence",
+      description: "Repeated invalid authentication trials from 203.0.113.19 exceeding baseline threshold.",
+      mitre_tag: "T1110.001",
+      status: "acknowledged",
+      event_count: 15,
+      rule_id: "ssh_invalid_user_guessing",
+      last_seen: new Date(baseTime - 42 * 60000).toISOString().replace("T", " ").replace(/\..+$/, " UTC"),
+      details: { src_ip: "203.0.113.19", username: "postgres" }
+    }
+  ];
+
+  return {
+    windowMinutes: 60,
+    startTime: new Date(baseTime - 59 * 60000).toISOString(),
+    endTime: new Date(baseTime).toISOString(),
+    totalEvents: sumTotal,
+    totalAlerts,
+    openAlerts,
+    critHighAlerts: severityCounts.critical + severityCounts.high,
+    successfulLogins: sumSuccess,
+    failedLogins: sumFailure,
+    otherEvents: sumOther,
+    buckets,
+    severityCounts,
+    outcomeCounts: {
+      success: sumSuccess,
+      failure: sumFailure
+    },
+    topIps,
+    topUsers,
+    priorityAlerts
+  };
+}
+
+// Monotone Cubic Spline (Fritsch-Carlson algorithm) for natural, overshoot-free curves
+function generateMonotonePath(points) {
+  if (!points || !points.length) return "";
+  if (points.length === 1) return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  if (points.length === 2) {
+    return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)} L ${points[1].x.toFixed(1)} ${points[1].y.toFixed(1)}`;
+  }
+
+  const n = points.length;
+  const dxs = new Float64Array(n - 1);
+  const dys = new Float64Array(n - 1);
+  const ms = new Float64Array(n - 1);
+
+  for (let i = 0; i < n - 1; i++) {
+    const dx = points[i + 1].x - points[i].x;
+    const dy = points[i + 1].y - points[i].y;
+    dxs[i] = dx;
+    dys[i] = dy;
+    ms[i] = dx !== 0 ? dy / dx : 0;
+  }
+
+  const tangents = new Float64Array(n);
+  tangents[0] = ms[0];
+  tangents[n - 1] = ms[n - 2];
+
+  for (let i = 1; i < n - 1; i++) {
+    const mPrev = ms[i - 1];
+    const mCur = ms[i];
+    if (mPrev * mCur <= 0) {
+      tangents[i] = 0;
+    } else {
+      tangents[i] = (mPrev + mCur) / 2;
+    }
+  }
+
+  for (let i = 0; i < n - 1; i++) {
+    const m = ms[i];
+    if (m === 0) {
+      tangents[i] = 0;
+      tangents[i + 1] = 0;
+    } else {
+      const alpha = tangents[i] / m;
+      const beta = tangents[i + 1] / m;
+      const dist = alpha * alpha + beta * beta;
+      if (dist > 9) {
+        const tau = 3 / Math.sqrt(dist);
+        tangents[i] = tau * alpha * m;
+        tangents[i + 1] = tau * beta * m;
+      }
+    }
+  }
+
+  let path = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const dx = dxs[i] / 3;
+
+    const cp1x = p1.x + dx;
+    const cp1y = p1.y + tangents[i] * dx;
+    const cp2x = p2.x - dx;
+    const cp2y = p2.y - tangents[i + 1] * dx;
+
+    path += ` C ${cp1x.toFixed(1)} ${cp1y.toFixed(1)}, ${cp2x.toFixed(1)} ${cp2y.toFixed(1)}, ${p2.x.toFixed(1)} ${p2.y.toFixed(1)}`;
+  }
+
+  return path;
+}
+
+// Backwards-compatibility alias
+const generateSmoothPath = generateMonotonePath;
+
+// -------------------------------------------------------------
 // Dashboard Overview & Interactive Analytics Visualizations
 // -------------------------------------------------------------
 async function loadDashboard() {
-  try {
-    const res = await fetch("/api/v1/stats", { headers: authHeaders() });
-    if (res.status === 401) return handleLogout();
-    const stats = await res.json();
+  const isDemo = state.telemetryMode !== "live";
+
+  // Update Telemetry Mode Badges & Buttons
+  const modeBadge = document.getElementById("telemetry-mode-indicator");
+  const sourceLabel = document.getElementById("dashboard-source-label");
+  const btnDemo = document.getElementById("btn-telemetry-demo");
+  const btnLive = document.getElementById("btn-telemetry-live");
+
+  if (isDemo) {
+    if (modeBadge) {
+      modeBadge.textContent = "⚡ DEMO TELEMETRY (60-MIN)";
+      modeBadge.className = "badge badge-low";
+    }
+    if (sourceLabel) sourceLabel.textContent = "Simulated Enterprise SOC Telemetry (Correlated Anomaly)";
+    if (btnDemo) btnDemo.classList.add("active-status");
+    if (btnLive) btnLive.classList.remove("active-status");
+
+    // Unified Mock Dataset Source of Truth
+    const mock = generateUnifiedMockDataset();
 
     const evTotal = document.getElementById("stat-total-events");
-    if (evTotal) evTotal.textContent = stats.total_events || 0;
+    if (evTotal) evTotal.textContent = mock.totalEvents.toLocaleString();
 
     const alTotal = document.getElementById("stat-total-alerts");
-    if (alTotal) alTotal.textContent = stats.total_alerts || 0;
+    if (alTotal) alTotal.textContent = mock.totalAlerts;
 
     const opTotal = document.getElementById("stat-open-alerts");
-    if (opTotal) opTotal.textContent = stats.open_alerts || 0;
+    if (opTotal) opTotal.textContent = mock.openAlerts;
 
-    const criticalCount = stats.severity_counts?.critical || 0;
-    const highCount = stats.severity_counts?.high || 0;
     const critHigh = document.getElementById("stat-high-critical");
-    if (critHigh) critHigh.textContent = criticalCount + highCount;
+    if (critHigh) critHigh.textContent = mock.critHighAlerts;
 
-    // Update timestamp
     const tsElem = document.getElementById("dashboard-last-updated");
-    if (tsElem) {
-      tsElem.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+    if (tsElem) tsElem.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+
+    // 1. Priority Incident Queue
+    renderPriorityAlerts(mock.priorityAlerts);
+
+    // 2. 60-Minute Security Events Line Chart
+    renderEventsTimelineChart(mock.buckets, true);
+
+    // 3. Alert Severity Donut Chart
+    renderSeverityChart(mock.severityCounts, mock.totalAlerts);
+
+    // 4. Authentication Outcomes Bar
+    renderOutcomeChart(mock.outcomeCounts);
+
+    // 5. Ranked Top IPs & Top Users
+    renderTopList("top-ips-container", mock.topIps, "ip", "failed attempts");
+    renderTopList("top-users-container", mock.topUsers, "username", "failed attempts");
+
+  } else {
+    // Live Database Telemetry Mode
+    if (modeBadge) {
+      modeBadge.textContent = "● LIVE DATABASE TELEMETRY";
+      modeBadge.className = "badge badge-success";
     }
+    if (sourceLabel) sourceLabel.textContent = "Live SQLite Storage Telemetry";
+    if (btnDemo) btnDemo.classList.remove("active-status");
+    if (btnLive) btnLive.classList.add("active-status");
 
-    // 1. Priority Urgent Alerts Queue (Highest Priority)
-    loadPriorityAlerts();
+    try {
+      const res = await fetch("/api/v1/stats", { headers: authHeaders() });
+      if (res.status === 401) return handleLogout();
+      const stats = await res.json();
 
-    // 2. Primary Analytics: Security Events Over Time & Authentication Trends
-    loadEventsTimeline();
+      const evTotal = document.getElementById("stat-total-events");
+      if (evTotal) evTotal.textContent = (stats.total_events || 0).toLocaleString();
 
-    // 3. Secondary Analytics: Severity Donut & Outcomes
-    renderSeverityChart(stats.severity_counts || {});
-    renderOutcomeChart(stats.outcome_counts || {});
+      const alTotal = document.getElementById("stat-total-alerts");
+      if (alTotal) alTotal.textContent = stats.total_alerts || 0;
 
-    // 4. Threat Intel: Top IPs & Top Users
-    renderTopList("top-ips-container", stats.top_ips || [], "ip");
-    renderTopList("top-users-container", stats.top_users || [], "username");
-  } catch (err) {
-    console.error("Failed to load dashboard:", err);
-    showToast("Failed to refresh dashboard telemetry", "error");
+      const opTotal = document.getElementById("stat-open-alerts");
+      if (opTotal) opTotal.textContent = stats.open_alerts || 0;
+
+      const criticalCount = stats.severity_counts?.critical || 0;
+      const highCount = stats.severity_counts?.high || 0;
+      const critHigh = document.getElementById("stat-high-critical");
+      if (critHigh) critHigh.textContent = criticalCount + highCount;
+
+      const tsElem = document.getElementById("dashboard-last-updated");
+      if (tsElem) tsElem.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+
+      // 1. Live Priority Queue
+      loadLivePriorityAlerts();
+
+      // 2. Live Events Line Chart
+      loadLiveEventsTimeline();
+
+      // 3. Live Severity Donut & Outcomes
+      renderSeverityChart(stats.severity_counts || {});
+      renderOutcomeChart(stats.outcome_counts || {});
+
+      // 4. Live Ranked IPs & Users
+      renderTopList("top-ips-container", stats.top_ips || [], "ip", "events");
+      renderTopList("top-users-container", stats.top_users || [], "username", "attempts");
+
+    } catch (err) {
+      console.error("Failed to load live dashboard:", err);
+      showToast("Failed to refresh live telemetry", "error");
+    }
   }
 }
 
-// Priority Queue for Critical and High Incidents
-async function loadPriorityAlerts() {
+// Render Priority Alerts Table from list
+function renderPriorityAlerts(alertsList) {
   const container = document.getElementById("priority-alerts-table-body");
   if (!container) return;
 
+  if (!alertsList || !alertsList.length) {
+    container.innerHTML = `
+      <tr>
+        <td colspan="5" style="text-align:center; color: var(--outcome-success-text); padding: 1.25rem; font-size:0.825rem;">
+          ✓ Priority queue clear. No active critical or high incidents require attention.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  container.innerHTML = "";
+  alertsList.forEach(a => {
+    const tr = document.createElement("tr");
+    tr.className = "clickable-row";
+    tr.tabIndex = 0;
+    tr.setAttribute("role", "button");
+    tr.setAttribute("aria-label", `Investigate ${a.severity} incident: ${a.title}`);
+    tr.dataset.alertId = String(a.id);
+
+    tr.innerHTML = `
+      <td><span class="badge badge-${escapeHtml(a.severity)}">${escapeHtml(a.severity)}</span></td>
+      <td>
+        <div style="font-weight:600; color:var(--text-primary);">${escapeHtml(a.title)}</div>
+        <div style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(a.description)}</div>
+      </td>
+      <td><span class="mitre-pill">${escapeHtml(a.mitre_tag || "N/A")}</span></td>
+      <td><span class="badge badge-status-${escapeHtml(a.status)}">${escapeHtml(a.status)}</span></td>
+      <td class="mono-cell">${escapeHtml(a.last_seen)}</td>
+    `;
+
+    tr.addEventListener("click", () => openAlertDrawer(a.id));
+    tr.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openAlertDrawer(a.id);
+      }
+    });
+
+    container.appendChild(tr);
+  });
+}
+
+async function loadLivePriorityAlerts() {
   try {
     const res = await fetch("/api/v1/alerts?limit=25", { headers: authHeaders() });
     if (!res.ok) throw new Error("Failed to load priority alerts");
     const data = await res.json();
-
-    const priorityAlerts = (data.alerts || []).filter(
+    const priority = (data.alerts || []).filter(
       a => (a.severity === "critical" || a.severity === "high") && a.status !== "closed"
     );
-
-    if (!priorityAlerts.length) {
+    renderPriorityAlerts(priority);
+  } catch (err) {
+    const container = document.getElementById("priority-alerts-table-body");
+    if (container) {
       container.innerHTML = `
         <tr>
-          <td colspan="5" style="text-align:center; color: var(--outcome-success-text); padding: 1.25rem; font-size:0.825rem;">
-            ✓ Priority queue clear. No active critical or high incidents require attention.
+          <td colspan="5" style="text-align:center; color: var(--sev-critical-text); padding: 1.25rem;">
+            Error retrieving priority alerts: ${escapeHtml(err.message)}
           </td>
         </tr>
       `;
-      return;
     }
-
-    container.innerHTML = "";
-    priorityAlerts.slice(0, 5).forEach(a => {
-      const tr = document.createElement("tr");
-      tr.className = "clickable-row";
-      tr.tabIndex = 0;
-      tr.setAttribute("role", "button");
-      tr.setAttribute("aria-label", `Investigate ${a.severity} incident: ${a.title}`);
-      tr.dataset.alertId = String(a.id);
-
-      tr.innerHTML = `
-        <td><span class="badge badge-${escapeHtml(a.severity)}">${escapeHtml(a.severity)}</span></td>
-        <td>
-          <div style="font-weight:600; color:var(--text-primary);">${escapeHtml(a.title)}</div>
-          <div style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(a.description)}</div>
-        </td>
-        <td><span class="mitre-pill">${escapeHtml(a.mitre_tag || "N/A")}</span></td>
-        <td><span class="badge badge-status-${escapeHtml(a.status)}">${escapeHtml(a.status)}</span></td>
-        <td class="mono-cell">${escapeHtml(a.last_seen)}</td>
-      `;
-
-      tr.addEventListener("click", () => openAlertDrawer(a.id));
-      tr.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          openAlertDrawer(a.id);
-        }
-      });
-
-      container.appendChild(tr);
-    });
-  } catch (err) {
-    container.innerHTML = `
-      <tr>
-        <td colspan="5" style="text-align:center; color: var(--sev-critical-text); padding: 1.25rem;">
-          Error retrieving priority alerts: ${escapeHtml(err.message)}
-        </td>
-      </tr>
-    `;
   }
 }
 
 // -------------------------------------------------------------
 // Chart 1: Security Events Over Time & Authentication Trends
 // -------------------------------------------------------------
-async function loadEventsTimeline() {
+async function loadLiveEventsTimeline() {
   const container = document.getElementById("chart-events-timeline");
   if (!container) return;
 
   try {
-    const res = await fetch("/api/v1/events?limit=250", { headers: authHeaders() });
+    const res = await fetch("/api/v1/events?limit=500", { headers: authHeaders() });
     if (!res.ok) throw new Error("Could not fetch events for timeline");
     const data = await res.json();
-    renderEventsTimelineChart(data.events || []);
-  } catch (err) {
-    container.innerHTML = `
-      <div class="chart-empty-state">
-        <div class="chart-empty-icon" style="color:var(--sev-critical-text);">⚠</div>
-        <div class="chart-empty-title">Failed to load event trend telemetry</div>
-        <div class="chart-empty-desc">${escapeHtml(err.message)}</div>
-      </div>
-    `;
-  }
-}
 
-function renderEventsTimelineChart(events) {
-  const container = document.getElementById("chart-events-timeline");
-  const tooltip = document.getElementById("events-timeline-tooltip");
-  const subtitle = document.getElementById("events-chart-subtitle");
-  if (!container) return;
+    const events = data.events || [];
+    if (!events.length) {
+      container.innerHTML = `
+        <div class="chart-empty-state">
+          <div class="chart-empty-icon">📊</div>
+          <div class="chart-empty-title">No Security Event Telemetry Available</div>
+          <div class="chart-empty-desc">The SQLite database currently contains 0 event records. Switch to Demo Telemetry or ingest logs in the Ingestion Lab.</div>
+        </div>
+      `;
+      const subtitle = document.getElementById("events-chart-subtitle");
+      if (subtitle) subtitle.textContent = "Zero events recorded in live database";
+      return;
+    }
 
-  if (!events || !events.length) {
-    container.innerHTML = `
-      <div class="chart-empty-state">
-        <div class="chart-empty-icon">📊</div>
-        <div class="chart-empty-title">No Security Event Telemetry Available</div>
-        <div class="chart-empty-desc">Ingest raw syslog data or load an attack scenario in the Ingestion Lab to visualize real-time event trends.</div>
-      </div>
-    `;
-    if (subtitle) subtitle.textContent = "Zero events recorded in telemetry database";
-    return;
-  }
-
-  // Sort events chronologically ascending
-  const sorted = [...events].sort((a, b) => (a.timestamp > b.timestamp ? 1 : -1));
-
-  let totalFails = 0;
-  let totalSuccs = 0;
-  sorted.forEach(e => {
-    if (e.outcome === "failure") totalFails++;
-    else if (e.outcome === "success") totalSuccs++;
-  });
-
-  // Derive chronological time buckets
-  const uniqueTs = [...new Set(sorted.map(e => e.timestamp))];
-  let buckets = [];
-
-  if (uniqueTs.length <= 16) {
-    // Discrete timestamps
-    const tsMap = new Map();
-    uniqueTs.forEach(ts => {
-      let label = ts;
-      if (ts.includes("T")) {
-        label = ts.split("T")[1].replace("Z", "");
-      } else if (ts.length > 15) {
-        label = ts.slice(-8);
-      }
-      tsMap.set(ts, { label, fullTs: ts, total: 0, failures: 0, successes: 0 });
-    });
-    sorted.forEach(e => {
-      const b = tsMap.get(e.timestamp);
-      if (b) {
-        b.total++;
-        if (e.outcome === "failure") b.failures++;
-        else if (e.outcome === "success") b.successes++;
-      }
-    });
-    buckets = Array.from(tsMap.values());
-  } else {
-    // Generate 12 time window buckets
+    // Bucket live events into 30 minute/hourly buckets
+    const sorted = [...events].sort((a, b) => (a.timestamp > b.timestamp ? 1 : -1));
     const startMs = new Date(sorted[0].timestamp).getTime();
     const endMs = new Date(sorted[sorted.length - 1].timestamp).getTime();
-    const span = Math.max(endMs - startMs, 1000);
-    const bucketCount = 12;
+    const span = Math.max(endMs - startMs, 60000);
+    const bucketCount = Math.min(60, Math.max(12, Math.floor(span / 60000)));
     const bucketStep = span / bucketCount;
 
+    const buckets = [];
     for (let i = 0; i < bucketCount; i++) {
       const bStart = startMs + i * bucketStep;
       const d = new Date(bStart);
-      const label = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}:${String(d.getUTCSeconds()).padStart(2, '0')}`;
-      buckets.push({ label, fullTs: d.toISOString(), total: 0, failures: 0, successes: 0 });
+      const label = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      buckets.push({
+        minuteIndex: i,
+        timeLabel: label,
+        fullIso: d.toISOString(),
+        total: 0,
+        failures: 0,
+        successes: 0,
+        other: 0,
+        isSpike: false,
+        minuteOffset: bucketCount - i
+      });
     }
 
     sorted.forEach(e => {
@@ -361,24 +671,75 @@ function renderEventsTimelineChart(events) {
       b.total++;
       if (e.outcome === "failure") b.failures++;
       else if (e.outcome === "success") b.successes++;
+      else b.other++;
     });
+
+    // Ensure invariants on all buckets
+    buckets.forEach(b => {
+      b.other = Math.max(0, b.total - (b.failures + b.successes));
+      b.isSpike = b.failures >= 15;
+    });
+
+    renderEventsTimelineChart(buckets, false);
+
+  } catch (err) {
+    container.innerHTML = `
+      <div class="chart-empty-state">
+        <div class="chart-empty-icon" style="color:var(--sev-critical-text);">⚠</div>
+        <div class="chart-empty-title">Failed to load event trend telemetry</div>
+        <div class="chart-empty-desc">${escapeHtml(err.message)}</div>
+      </div>
+    `;
   }
+}
+
+function renderEventsTimelineChart(buckets, isDemo = true) {
+  const container = document.getElementById("chart-events-timeline");
+  const tooltip = document.getElementById("events-timeline-tooltip");
+  const subtitle = document.getElementById("events-chart-subtitle");
+  if (!container) return;
+
+  if (!buckets || !buckets.length) {
+    container.innerHTML = `
+      <div class="chart-empty-state">
+        <div class="chart-empty-icon">📊</div>
+        <div class="chart-empty-title">No Security Event Telemetry Available</div>
+        <div class="chart-empty-desc">Ingest raw syslog data or load an attack scenario in the Ingestion Lab to visualize real-time event trends.</div>
+      </div>
+    `;
+    if (subtitle) subtitle.textContent = "Zero events recorded in telemetry window";
+    return;
+  }
+
+  let totalEvents = 0;
+  let totalFails = 0;
+  let totalSuccs = 0;
+  let totalOther = 0;
+  buckets.forEach(b => {
+    totalEvents += b.total;
+    totalFails += b.failures;
+    totalSuccs += b.successes;
+    totalOther += (b.other || 0);
+  });
 
   if (subtitle) {
-    subtitle.textContent = `Tracking ${sorted.length} events across ${buckets.length} intervals (${totalFails} failures, ${totalSuccs} successes)`;
+    const rangeText = isDemo ? "60-minute window (Simulated Telemetry)" : `${buckets.length} intervals (Live Storage)`;
+    subtitle.textContent = `Tracking ${totalEvents.toLocaleString()} events across ${rangeText} (${totalFails.toLocaleString()} failures, ${totalSuccs.toLocaleString()} successes, ${totalOther.toLocaleString()} other)`;
   }
 
-  // SVG Chart Geometry
-  const width = 760;
-  const height = 200;
-  const padLeft = 45;
-  const padRight = 25;
-  const padTop = 20;
-  const padBottom = 30;
+  // Responsive SVG Geometry
+  const width = 820;
+  const height = 230;
+  const padLeft = 48;
+  const padRight = 24;
+  const padTop = 24;
+  const padBottom = 32;
   const chartW = width - padLeft - padRight;
   const chartH = height - padTop - padBottom;
 
-  const maxVal = Math.max(...buckets.map(b => Math.max(b.total, b.failures, b.successes)), 4);
+  const maxValRaw = Math.max(...buckets.map(b => b.total), 8);
+  // Round up to clean, readable ceiling
+  const maxVal = Math.ceil(maxValRaw / 20) * 20 || 20;
   const stepX = chartW / Math.max(buckets.length - 1, 1);
 
   const ptsTotal = buckets.map((b, i) => ({
@@ -397,7 +758,7 @@ function renderEventsTimelineChart(events) {
     b
   }));
 
-  // Gridlines
+  // Background Horizontal Gridlines
   let gridSvg = "";
   const gridSteps = 4;
   for (let s = 0; s <= gridSteps; s++) {
@@ -409,25 +770,50 @@ function renderEventsTimelineChart(events) {
     `;
   }
 
-  // X Axis labels
-  let xLabelsSvg = "";
-  const labelInterval = Math.max(1, Math.floor(buckets.length / 5));
-  buckets.forEach((b, i) => {
-    if (i % labelInterval === 0 || i === buckets.length - 1) {
-      const x = padLeft + i * stepX;
-      xLabelsSvg += `
-        <text class="chart-axis-text" x="${x}" y="${padTop + chartH + 18}" text-anchor="middle">${escapeHtml(b.label)}</text>
-      `;
-    }
-  });
+  // X-Axis readable time tick labels & vertical guide gridlines (5 evenly spaced intervals, no overlap)
+  let xTicksSvg = "";
+  const tickCount = Math.min(5, buckets.length);
+  for (let t = 0; t < tickCount; t++) {
+    const idx = Math.round((t / (tickCount - 1)) * (buckets.length - 1));
+    const b = buckets[idx];
+    if (!b) continue;
+    const x = padLeft + idx * stepX;
+    xTicksSvg += `
+      <line class="chart-v-gridline" x1="${x}" y1="${padTop}" x2="${x}" y2="${padTop + chartH}" />
+      <line x1="${x}" y1="${padTop + chartH}" x2="${x}" y2="${padTop + chartH + 5}" stroke="var(--border-subtle)" />
+      <text class="chart-axis-text" x="${x}" y="${padTop + chartH + 18}" text-anchor="middle">${escapeHtml(b.timeLabel)}</text>
+    `;
+  }
 
-  // Paths
-  const areaTotalPath = `M ${ptsTotal[0].x} ${padTop + chartH} L ${ptsTotal.map(p => `${p.x} ${p.y}`).join(' L ')} L ${ptsTotal[ptsTotal.length - 1].x} ${padTop + chartH} Z`;
-  const lineTotalPath = `M ${ptsTotal.map(p => `${p.x} ${p.y}`).join(' L ')}`;
-  const lineFailPath = `M ${ptsFail.map(p => `${p.x} ${p.y}`).join(' L ')}`;
-  const lineSuccPath = `M ${ptsSucc.map(p => `${p.x} ${p.y}`).join(' L ')}`;
+  // Anomaly Bands (correlating to the brute-force burst & password spray)
+  let anomalySvg = "";
+  if (isDemo && buckets.length === 60) {
+    // Anomaly 1: SSH Brute-Force Burst (min 25 to 33)
+    const xBurst1Start = padLeft + 24.5 * stepX;
+    const xBurst1End = padLeft + 33.5 * stepX;
+    const burst1W = xBurst1End - xBurst1Start;
 
-  // Points & Hover Bars
+    // Anomaly 2: Credential Spray Burst (min 46 to 49)
+    const xBurst2Start = padLeft + 45.5 * stepX;
+    const xBurst2End = padLeft + 49.5 * stepX;
+    const burst2W = xBurst2End - xBurst2Start;
+
+    anomalySvg = `
+      <rect class="chart-anomaly-band" x="${xBurst1Start}" y="${padTop}" width="${burst1W}" height="${chartH}" />
+      <text class="chart-anomaly-text" x="${xBurst1Start + 6}" y="${padTop + 14}">⚠ BRUTE FORCE BURST</text>
+      <rect class="chart-anomaly-band" x="${xBurst2Start}" y="${padTop}" width="${burst2W}" height="${chartH}" />
+      <text class="chart-anomaly-text" x="${xBurst2Start + 6}" y="${padTop + 14}">⚡ SPRAY</text>
+    `;
+  }
+
+  // Monotone Cubic Spline curves (guaranteed overshoot-free, natural security telemetry lines)
+  const lineTotalD = generateMonotonePath(ptsTotal);
+  const lineFailD = generateMonotonePath(ptsFail);
+  const lineSuccD = generateMonotonePath(ptsSucc);
+
+  const areaTotalD = `${lineTotalD} L ${ptsTotal[ptsTotal.length - 1].x.toFixed(1)} ${(padTop + chartH).toFixed(1)} L ${ptsTotal[0].x.toFixed(1)} ${(padTop + chartH).toFixed(1)} Z`;
+
+  // Anomaly Peak Points & Hover Hitboxes
   let pointsSvg = "";
   let hoverBarsSvg = "";
   const barSlotW = chartW / buckets.length;
@@ -435,13 +821,17 @@ function renderEventsTimelineChart(events) {
   buckets.forEach((b, i) => {
     const x = padLeft + i * stepX;
     const yF = ptsFail[i].y;
-    const yS = ptsSucc[i].y;
 
-    if (b.failures > 0) {
-      pointsSvg += `<circle class="chart-point" cx="${x}" cy="${yF}" r="3.5" stroke="var(--sev-critical-accent)" fill="var(--sev-critical-accent)" />`;
+    if (b.failures >= 24) {
+      pointsSvg += `
+        <circle class="chart-point" cx="${x}" cy="${yF}" r="4" stroke="var(--sev-critical-accent)" fill="var(--bg-surface)" stroke-width="2" />
+      `;
     }
-    if (b.successes > 0) {
-      pointsSvg += `<circle class="chart-point" cx="${x}" cy="${yS}" r="3.5" stroke="#22c55e" fill="#22c55e" />`;
+
+    if (b.isCompromise) {
+      pointsSvg += `
+        <circle class="chart-point" cx="${x}" cy="${ptsSucc[i].y}" r="4.5" stroke="#f59e0b" fill="#f59e0b" stroke-width="2" title="Breach correlation marker" />
+      `;
     }
 
     const boxX = x - barSlotW / 2;
@@ -451,22 +841,39 @@ function renderEventsTimelineChart(events) {
   });
 
   container.innerHTML = `
-    <svg class="svg-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Security events over time line and area chart">
-      <title>Security Events & Authentication Trends Over Time</title>
-      <desc>Chart displaying total event volume and separate trends for failed and successful logins</desc>
+    <svg class="svg-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Security events over time line chart">
+      <defs>
+        <linearGradient id="area-grad-total" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--accent-primary)" stop-opacity="0.16" />
+          <stop offset="100%" stop-color="var(--accent-primary)" stop-opacity="0.01" />
+        </linearGradient>
+      </defs>
+      <title>Security Events Over Time &amp; Authentication Trends</title>
+      <desc>60-minute time-series chart showing total event volume alongside successful and failed login counts</desc>
       ${gridSvg}
-      <path class="chart-area-fill" fill="var(--accent-primary)" d="${areaTotalPath}" />
-      <path class="chart-line" stroke="var(--accent-primary)" d="${lineTotalPath}" />
-      <path class="chart-line" stroke="var(--sev-critical-accent)" d="${lineFailPath}" />
-      <path class="chart-line" stroke="#22c55e" d="${lineSuccPath}" />
+      ${xTicksSvg}
+      ${anomalySvg}
+      <path class="chart-area-fill" fill="url(#area-grad-total)" d="${areaTotalD}" />
+      <path class="chart-line" stroke="var(--accent-primary)" d="${lineTotalD}" />
+      <path class="chart-line" stroke="var(--sev-critical-accent)" d="${lineFailD}" />
+      <path class="chart-line" stroke="#22c55e" d="${lineSuccD}" />
       ${pointsSvg}
-      ${xLabelsSvg}
+      <!-- Crosshair & Tracker Dots -->
+      <line id="events-crosshair-line" class="chart-crosshair" x1="0" y1="${padTop}" x2="0" y2="${padTop + chartH}" style="display:none;" />
+      <circle id="events-dot-total" class="chart-tracker-dot" r="4.5" fill="var(--bg-surface)" stroke="var(--accent-primary)" stroke-width="2.5" style="display:none;" />
+      <circle id="events-dot-fail" class="chart-tracker-dot" r="4.5" fill="var(--bg-surface)" stroke="var(--sev-critical-accent)" stroke-width="2.5" style="display:none;" />
+      <circle id="events-dot-succ" class="chart-tracker-dot" r="4.5" fill="var(--bg-surface)" stroke="#22c55e" stroke-width="2.5" style="display:none;" />
       ${hoverBarsSvg}
     </svg>
   `;
 
-  // Attach hover interactions
+  // Interactive Hover Tooltip & Crosshair Handlers
+  const crosshairLine = container.querySelector("#events-crosshair-line");
+  const dotTotal = container.querySelector("#events-dot-total");
+  const dotFail = container.querySelector("#events-dot-fail");
+  const dotSucc = container.querySelector("#events-dot-succ");
   const hoverBars = container.querySelectorAll(".chart-hover-bar");
+
   hoverBars.forEach(bar => {
     const idx = parseInt(bar.dataset.idx, 10);
     const b = buckets[idx];
@@ -481,38 +888,89 @@ function renderEventsTimelineChart(events) {
       tooltip.style.display = "block";
       tooltip.style.left = `${mouseX}px`;
       tooltip.style.top = `${mouseY}px`;
+
+      const x = ptsTotal[idx].x;
+      if (crosshairLine) {
+        crosshairLine.setAttribute("x1", x);
+        crosshairLine.setAttribute("x2", x);
+        crosshairLine.style.display = "block";
+      }
+
+      if (dotTotal) {
+        dotTotal.setAttribute("cx", x);
+        dotTotal.setAttribute("cy", ptsTotal[idx].y);
+        dotTotal.style.display = "block";
+      }
+      if (dotFail) {
+        dotFail.setAttribute("cx", x);
+        dotFail.setAttribute("cy", ptsFail[idx].y);
+        dotFail.style.display = "block";
+      }
+      if (dotSucc) {
+        dotSucc.setAttribute("cx", x);
+        dotSucc.setAttribute("cy", ptsSucc[idx].y);
+        dotSucc.style.display = "block";
+      }
+
+      const spikeBadge = b.failures >= 14 ? '<span class="badge badge-critical" style="font-size:0.6rem; padding:0.1rem 0.35rem;">Spike</span>' : '';
+      const breachBadge = b.isCompromise ? '<span class="badge badge-medium" style="font-size:0.6rem; padding:0.1rem 0.35rem;">Breach Flag</span>' : '';
+      const anomalyNote = b.anomalyTag ? `<div style="font-size:0.68rem; color:var(--sev-critical-text); font-weight:600; margin-top:0.25rem;">⚠ ${escapeHtml(b.anomalyTag)}</div>` : '';
+
+      const failRatio = b.total > 0 ? Math.round((b.failures / b.total) * 100) : 0;
+
       tooltip.innerHTML = `
-        <div style="font-weight:600; color:var(--text-primary); margin-bottom:0.25rem;">Interval: ${escapeHtml(b.label)}</div>
-        <div style="color:var(--text-secondary);">Total Events: <strong>${b.total}</strong></div>
-        <div style="color:var(--sev-critical-text);">Failed Logins: <strong>${b.failures}</strong>${b.failures >= 3 ? ' <span class="badge badge-critical" style="font-size:0.6rem; padding:0.1rem 0.35rem;">Spike</span>' : ''}</div>
-        <div style="color:#22c55e;">Successful Logins: <strong>${b.successes}</strong></div>
-        <div style="font-size:0.7rem; color:var(--text-dim); margin-top:0.3rem;">Click to explore events &rarr;</div>
+        <div style="font-weight:600; color:var(--text-primary); margin-bottom:0.3rem;">
+          Time: ${escapeHtml(b.timeLabel)} (${b.minuteOffset}m ago)
+        </div>
+        <div style="color:var(--text-secondary); display:flex; justify-content:space-between; gap:1.25rem;">
+          <span>All Ingested Events:</span> <strong>${b.total}</strong>
+        </div>
+        <div style="color:var(--sev-critical-text); display:flex; justify-content:space-between; gap:1.25rem;">
+          <span>Failed Logins:</span> 
+          <span><strong>${b.failures}</strong> (${failRatio}%) ${spikeBadge} ${breachBadge}</span>
+        </div>
+        <div style="color:#22c55e; display:flex; justify-content:space-between; gap:1.25rem;">
+          <span>Successful Logins:</span> <strong>${b.successes}</strong>
+        </div>
+        <div style="color:var(--text-dim); display:flex; justify-content:space-between; gap:1.25rem; font-size:0.7rem;">
+          <span>Other Telemetry:</span> <span>${b.other}</span>
+        </div>
+        ${anomalyNote}
+        <div style="font-size:0.68rem; color:var(--text-dim); margin-top:0.35rem; border-top:1px solid var(--border-subtle); padding-top:0.25rem;">
+          Click interval to inspect in Event Explorer &rarr;
+        </div>
       `;
     });
 
     bar.addEventListener("mousemove", (e) => {
       if (!tooltip) return;
       const rect = container.getBoundingClientRect();
-      tooltip.style.left = `${e.clientX - rect.left}px`;
-      tooltip.style.top = `${e.clientY - rect.top}px`;
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      tooltip.style.left = `${mouseX}px`;
+      tooltip.style.top = `${mouseY}px`;
     });
 
     bar.addEventListener("mouseleave", () => {
       if (tooltip) tooltip.style.display = "none";
+      if (crosshairLine) crosshairLine.style.display = "none";
+      if (dotTotal) dotTotal.style.display = "none";
+      if (dotFail) dotFail.style.display = "none";
+      if (dotSucc) dotSucc.style.display = "none";
     });
 
     bar.addEventListener("click", () => {
       if (tooltip) tooltip.style.display = "none";
       switchTab("events");
-      showToast(`Filtered Event Explorer for interval ${b.label}`, "info");
+      showToast(`Inspecting telemetry window for interval ${b.timeLabel}`, "info");
     });
   });
 }
 
 // -------------------------------------------------------------
-// Chart 2: Alert Severity Distribution (Compact Interactive Donut)
+// Chart 2: Alert Severity Distribution (Proportional Donut)
 // -------------------------------------------------------------
-function renderSeverityChart(counts) {
+function renderSeverityChart(counts, explicitTotal = null) {
   const container = document.getElementById("chart-severity");
   if (!container) return;
 
@@ -523,7 +981,7 @@ function renderSeverityChart(counts) {
     { key: "low", label: "Low", color: "var(--sev-low-accent)" },
   ];
 
-  const total = sevs.reduce((acc, s) => acc + (counts[s.key] || 0), 0);
+  const total = explicitTotal !== null ? explicitTotal : sevs.reduce((acc, s) => acc + (counts[s.key] || 0), 0);
 
   if (total === 0) {
     container.innerHTML = `
@@ -536,11 +994,11 @@ function renderSeverityChart(counts) {
     return;
   }
 
-  // Generate SVG Donut
-  const cx = 65;
-  const cy = 65;
-  const R = 54;
-  const r = 36;
+  // Generate SVG Donut with exact mathematical proportions
+  const cx = 70;
+  const cy = 70;
+  const R = 56;
+  const r = 38;
   let currentAngle = -Math.PI / 2;
   let slicesSvg = "";
 
@@ -562,7 +1020,6 @@ function renderSeverityChart(counts) {
 
     let pathD = "";
     if (val === total) {
-      // Full circle donut
       pathD = `
         M ${cx} ${cy - R}
         A ${R} ${R} 0 1 1 ${cx} ${cy + R}
@@ -582,7 +1039,7 @@ function renderSeverityChart(counts) {
     currentAngle = endAngle;
   });
 
-  // Build Interactive Legend
+  // Interactive Legend with Exact Counts & Proportions
   let legendHtml = `<div class="donut-legend">`;
   sevs.forEach(s => {
     const val = counts[s.key] || 0;
@@ -603,17 +1060,17 @@ function renderSeverityChart(counts) {
   container.innerHTML = `
     <div class="donut-wrapper">
       <div class="donut-svg-container">
-        <svg viewBox="0 0 130 130" class="svg-chart" role="img" aria-label="Alert severity distribution donut chart">
+        <svg viewBox="0 0 140 140" class="svg-chart" role="img" aria-label="Alert severity distribution donut chart">
           ${slicesSvg}
           <text class="donut-center-num" x="${cx}" y="${cy - 2}">${total}</text>
-          <text class="donut-center-lbl" x="${cx}" y="${cy + 13}">ALERTS</text>
+          <text class="donut-center-lbl" x="${cx}" y="${cy + 13}">TOTAL ALERTS</text>
         </svg>
       </div>
       ${legendHtml}
     </div>
   `;
 
-  // Attach click filters
+  // Attach Filter Routes
   const triggerFilter = (sevKey) => {
     switchTab("alerts");
     const sevSelect = document.getElementById("filter-alert-severity");
@@ -636,7 +1093,7 @@ function renderSeverityChart(counts) {
 }
 
 // -------------------------------------------------------------
-// Chart 3: Authentication Outcomes & Trends
+// Chart 3: Authentication Outcomes & Ratio Analysis
 // -------------------------------------------------------------
 function renderOutcomeChart(counts) {
   const container = document.getElementById("chart-outcomes");
@@ -656,24 +1113,25 @@ function renderOutcomeChart(counts) {
     return;
   }
 
-  const succPct = Math.round((successes / total) * 100);
-  const failPct = 100 - succPct;
+  const succPct = ((successes / total) * 100).toFixed(1);
+  const failPct = ((failures / total) * 100).toFixed(1);
 
-  const elevatedFail = failPct >= 50;
+  // Clear warning state when failure ratio is elevated (>= 20%)
+  const elevatedFail = parseFloat(failPct) >= 20.0;
 
   container.innerHTML = `
     <div style="font-size:0.75rem; margin-bottom:0.6rem; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.4rem;">
-      <span style="color:${elevatedFail ? 'var(--sev-critical-text)' : 'var(--text-secondary)'}; font-weight:600; display:flex; align-items:center; gap:0.35rem;">
+      <span style="color:${elevatedFail ? 'var(--sev-high-text)' : 'var(--outcome-success-text)'}; font-weight:600; display:flex; align-items:center; gap:0.35rem;">
         <span>${elevatedFail ? '⚠' : '✓'}</span>
-        ${elevatedFail ? 'Elevated Failure Ratio' : 'Normal Authentication Baseline'}
+        ${elevatedFail ? `Elevated Failure Velocity (${failPct}% failure rate)` : `Normal Authentication Baseline (${succPct}% success rate)`}
       </span>
-      <span style="font-family:var(--font-mono); font-size:0.725rem; color:var(--text-dim);">${total} total attempts</span>
+      <span style="font-family:var(--font-mono); font-size:0.725rem; color:var(--text-dim);">${total.toLocaleString()} total attempts</span>
     </div>
 
     <!-- Segmented Proportion Meter -->
     <div class="ranked-bar-track" style="height:9px; display:flex; margin-bottom:0.75rem;">
-      <div style="width: ${succPct}%; background-color: #22c55e;" title="Success: ${successes} (${succPct}%)"></div>
-      <div style="width: ${failPct}%; background-color: var(--sev-critical-accent);" title="Failure: ${failures} (${failPct}%)"></div>
+      <div style="width: ${succPct}%; background-color: #22c55e;" title="Success: ${successes.toLocaleString()} (${succPct}%)"></div>
+      <div style="width: ${failPct}%; background-color: var(--sev-critical-accent);" title="Failure: ${failures.toLocaleString()} (${failPct}%)"></div>
     </div>
 
     <!-- Detail Breakdown Rows -->
@@ -684,7 +1142,7 @@ function renderOutcomeChart(counts) {
       <div class="bar-track">
         <div class="bar-fill" style="width: ${succPct}%; background-color: #22c55e;"></div>
       </div>
-      <span class="bar-count">${escapeHtml(successes)} <span style="font-size:0.65rem; color:var(--text-dim);">(${succPct}%)</span></span>
+      <span class="bar-count">${escapeHtml(successes.toLocaleString())} <span style="font-size:0.65rem; color:var(--text-dim);">(${succPct}%)</span></span>
     </div>
 
     <div class="bar-chart-row clickable-row" id="row-filter-failure" role="button" tabindex="0" title="Click to view failure events in Event Explorer">
@@ -694,7 +1152,7 @@ function renderOutcomeChart(counts) {
       <div class="bar-track">
         <div class="bar-fill" style="width: ${failPct}%; background-color: var(--sev-critical-accent);"></div>
       </div>
-      <span class="bar-count" style="color:var(--sev-critical-text);">${escapeHtml(failures)} <span style="font-size:0.65rem; color:var(--text-dim);">(${failPct}%)</span></span>
+      <span class="bar-count" style="color:var(--sev-critical-text);">${escapeHtml(failures.toLocaleString())} <span style="font-size:0.65rem; color:var(--text-dim);">(${failPct}%)</span></span>
     </div>
   `;
 
@@ -732,9 +1190,9 @@ function renderOutcomeChart(counts) {
 }
 
 // -------------------------------------------------------------
-// Chart 4: Top Attacking Source IPs (Ranked Horizontal Bar Chart)
+// Chart 4: Top Attacking Source IPs & Targeted Usernames
 // -------------------------------------------------------------
-function renderTopList(elementId, items, keyName) {
+function renderTopList(elementId, items, keyName, unitLabel = "attempts") {
   const container = document.getElementById(elementId);
   if (!container) return;
   if (!items || !items.length) {
@@ -742,11 +1200,13 @@ function renderTopList(elementId, items, keyName) {
     return;
   }
 
-  const maxVal = Math.max(...items.map(i => i.count || 0), 1);
+  // Consistent sorting: highest event count first
+  const sortedItems = [...items].sort((a, b) => (b.count || 0) - (a.count || 0));
+  const maxVal = Math.max(...sortedItems.map(i => i.count || 0), 1);
   const isIp = keyName === "ip";
 
   container.innerHTML = "";
-  items.forEach((item, idx) => {
+  sortedItems.forEach((item, idx) => {
     const val = String(item[keyName] || "unknown");
     const cnt = item.count || 0;
     const pct = Math.round((cnt / maxVal) * 100);
@@ -763,7 +1223,7 @@ function renderTopList(elementId, items, keyName) {
       <div class="ranked-bar-track">
         <div class="ranked-bar-fill" style="width: ${pct}%;"></div>
       </div>
-      <span class="badge badge-low" style="font-family:var(--font-mono); font-size:0.7rem; flex-shrink:0;">${escapeHtml(cnt)} events</span>
+      <span class="badge badge-low" style="font-family:var(--font-mono); font-size:0.7rem; flex-shrink:0;">${escapeHtml(cnt.toLocaleString())} ${escapeHtml(unitLabel)}</span>
     `;
 
     const openInEvents = () => {
@@ -796,6 +1256,7 @@ function renderTopList(elementId, items, keyName) {
     container.appendChild(row);
   });
 }
+
 
 
 // -------------------------------------------------------------
@@ -1856,6 +2317,24 @@ document.addEventListener("DOMContentLoaded", () => {
     refreshBtn.addEventListener("click", () => {
       loadDashboard();
       showToast("Dashboard telemetry refreshed", "info");
+    });
+  }
+
+  const btnDemo = document.getElementById("btn-telemetry-demo");
+  if (btnDemo) {
+    btnDemo.addEventListener("click", () => {
+      state.telemetryMode = "demo";
+      loadDashboard();
+      showToast("Switched to Demo Telemetry (60-Min Dataset)", "info");
+    });
+  }
+
+  const btnLive = document.getElementById("btn-telemetry-live");
+  if (btnLive) {
+    btnLive.addEventListener("click", () => {
+      state.telemetryMode = "live";
+      loadDashboard();
+      showToast("Switched to Live Database Telemetry", "info");
     });
   }
 
